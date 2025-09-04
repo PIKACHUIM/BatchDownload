@@ -6,9 +6,9 @@ add_files = [
 
 # TARGET
 target = Executable(
-    script="Clinet.py",
+    script="Client.py",
     base="Win32GUI",
-    icon="Clinet.ico",
+    icon="Client.ico",
     # uac_admin=True,
     target_name="BatchDownloader.exe"
 )

@@ -36,23 +36,13 @@ class App(ttk.Frame):
         self.workers_var = tk.IntVar(value=3)
         self.running = False
         self.crawler = None
-
-        # 立即设置主题
-        self._set_theme()
         self._build_ui()
 
-    # ---------- 主题 ----------
-    def _set_theme(self):
-        style = ttk.Style(self.master)
-        try:
-            style.theme_use("vista" if sys.platform == "win32" else "clam")
-        except tk.TclError:
-            style.theme_use("clam")
 
     # ---------- UI ----------
     def _build_ui(self):
         # 参数区
-        frm = ttk.LabelFrame(self, text="")
+        frm = ttk.LabelFrame(self, text="下载设置")
         frm.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 8))
         frm.columnconfigure(1, weight=1)
 
@@ -81,12 +71,12 @@ class App(ttk.Frame):
         # 控制按钮
         btn_frm = ttk.Frame(self)
         btn_frm.grid(row=1, column=0, columnspan=2, pady=4)
-        self.start_btn = ttk.Button(btn_frm, text="开始", command=self._start)
+        self.start_btn = ttk.Button(btn_frm, text="开始下载", command=self._start, bootstyle="success" )
         self.start_btn.pack(side="left", padx=4)
-        self.stop_btn = ttk.Button(btn_frm, text="停止", command=self._stop, state="disabled")
+        self.stop_btn = ttk.Button(btn_frm, text="停止下载", command=self._stop, state="disabled", bootstyle="disabled")
         self.stop_btn.pack(side="left", padx=4)
-        ttk.Button(btn_frm, text="打开目录", command=self._open_dir).pack(side="left", padx=4)
-        ttk.Button(btn_frm, text="导出日志", command=self._export_log).pack(side="left", padx=4)
+        ttk.Button(btn_frm, text="打开目录", command=self._open_dir).pack(side="left", padx=4, bootstyle="info-outline")
+        ttk.Button(btn_frm, text="导出日志", command=self._export_log).pack(side="left", padx=4, bootstyle="dark-outline")
 
         # 进度条
         self.pbar = ttk.Progressbar(self, orient="horizontal", mode="determinate")
@@ -193,9 +183,17 @@ class App(ttk.Frame):
     def _start(self):
         if self.running:
             return
+        self.start_btn.config(bootstyle="disabled")
+        self.start_btn.config(state="disabled")
+        self.stop_btn.config(bootstyle="danger")
+        self.stop_btn.config(state="normal")
         AsyncRunner(self._run_crawler()).start()
 
     def _stop(self):
+        self.start_btn.config(bootstyle="success")
+        self.start_btn.config(state="normal")
+        self.stop_btn.config(bootstyle="disabled")
+        self.stop_btn.config(state="disabled")
         if self.crawler:
             self.crawler._file_links.clear()
             self._log("已请求停止...")
