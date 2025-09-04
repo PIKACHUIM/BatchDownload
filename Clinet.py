@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import asyncio
-import threading
-import tkinter as tk
+import asyncio, threading, tkinter as tk
 from tkinter import ttk, filedialog, messagebox
-import sys
+import sys, os, datetime
 from pathlib import Path
 from batchdownload import BatchDownload
 
@@ -30,7 +28,7 @@ class App(ttk.Frame):
         master.rowconfigure(0, weight=1)
         self.grid(sticky="nsew")
 
-        # ---------- 变量 ----------
+        # 变量
         self.url_var = tk.StringVar()
         self.depth_var = tk.IntVar(value=1)
         self.store_var = tk.StringVar(value="downloads")
@@ -39,27 +37,24 @@ class App(ttk.Frame):
         self.running = False
         self.crawler = None
 
-        # 设置主题
+        # 立即设置主题
         self._set_theme()
         self._build_ui()
 
     # ---------- 主题 ----------
     def _set_theme(self):
-        style = ttk.Style()
-        if sys.platform == "win32":
-            style.theme_use("vista")
-        else:
-            try:
-                style.theme_use("clam")
-            except tk.TclError:
-                pass
+        style = ttk.Style(self.master)
+        try:
+            style.theme_use("vista" if sys.platform == "win32" else "clam")
+        except tk.TclError:
+            style.theme_use("clam")
 
     # ---------- UI ----------
     def _build_ui(self):
         # 参数区
         frm = ttk.LabelFrame(self, text="")
         frm.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 8))
-        frm.columnconfigure(1, weight=1)  # 让输入框占满
+        frm.columnconfigure(1, weight=1)
 
         # URL
         ttk.Label(frm, text="链接:").grid(row=0, column=0, sticky="e", padx=(0, 4))
@@ -90,6 +85,8 @@ class App(ttk.Frame):
         self.start_btn.pack(side="left", padx=4)
         self.stop_btn = ttk.Button(btn_frm, text="停止", command=self._stop, state="disabled")
         self.stop_btn.pack(side="left", padx=4)
+        ttk.Button(btn_frm, text="打开目录", command=self._open_dir).pack(side="left", padx=4)
+        ttk.Button(btn_frm, text="导出日志", command=self._export_log).pack(side="left", padx=4)
 
         # 进度条
         self.pbar = ttk.Progressbar(self, orient="horizontal", mode="determinate")
@@ -102,9 +99,8 @@ class App(ttk.Frame):
         scroll.grid(row=3, column=1, sticky="ns", pady=(4, 0))
         self.log.configure(yscrollcommand=scroll.set)
 
-        # 行列权重
         self.columnconfigure(0, weight=1)
-        self.rowconfigure(3, weight=1)  # 日志占剩余高度
+        self.rowconfigure(3, weight=1)
 
     # ---------- 工具 ----------
     def _log(self, txt):
@@ -117,6 +113,27 @@ class App(ttk.Frame):
         path = filedialog.askdirectory()
         if path:
             self.store_var.set(path)
+
+    def _open_dir(self):
+        path = Path(self.store_var.get())
+        if path.is_dir():
+            os.startfile(path) if sys.platform == "win32" else os.system(f'xdg-open "{path}"')
+        else:
+            messagebox.showwarning("提示", "目录不存在！")
+
+    def _export_log(self):
+        log_text = self.log.get("1.0", "end-1c")
+        if not log_text.strip():
+            messagebox.showinfo("提示", "暂无日志可导出")
+            return
+        f = filedialog.asksaveasfilename(
+            defaultextension=".log",
+            filetypes=[("日志文件", "*.log"), ("文本文件", "*.txt"), ("全部文件", "*.*")],
+            initialfile=f"batchdownload_{datetime.datetime.now():%Y%m%d_%H%M%S}.log"
+        )
+        if f:
+            Path(f).write_text(log_text, encoding="utf-8")
+            messagebox.showinfo("成功", f"已导出日志：\n{f}")
 
     def _set_running(self, flag):
         self.running = flag
@@ -139,13 +156,7 @@ class App(ttk.Frame):
         self._log("开始扫描...")
         self._set_running(True)
 
-        crawler = BatchDownload(
-            url=url,
-            depth=depth,
-            store_dir=str(store),
-            ext=ext,
-            download_html=False
-        )
+        crawler = BatchDownload(url=url, depth=depth, store_dir=str(store), ext=ext, download_html=False)
         self.crawler = crawler
 
         try:
