@@ -4,11 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "batchdownload"
-version = "0.1.0"
+version = "0.1.2"
 description = "Asynchronous batch directory crawler & downloader"
 readme = "README.md"
 license = {text = "MIT"}
-authors = [{name = "Your Name", email = "you@example.com"}]
+authors = [{name = "Pikachu Ren", email = "pikachuim@foxmail.com"}]
 keywords = ["async", "download", "crawler", "scraper"]
 classifiers = [
     "Programming Language :: Python :: 3",

@@ -94,19 +94,24 @@ class BatchDownload:
 
     # ---------- 下载相关 ----------
     async def _download_all(self, max_workers: int, chunk_size: int):
-        conn = aiohttp.TCPConnector(limit=max_workers)
+        # 1. 连接池可以稍微大一点，或者干脆用默认 100
+        conn = aiohttp.TCPConnector(limit=30)
         timeout = aiohttp.ClientTimeout(total=None, connect=30)
         async with aiohttp.ClientSession(connector=conn, timeout=timeout) as session:
-            tasks = []
-            for url in self._file_links:
-                # 关键：只取深度之后的相对路径，不再带 /NVIDIA/vGPU/NVIDIA
-                rel_path = unquote(urlparse(url).path).lstrip("/")
-                # 去掉前缀（深度 0 之前的路径）
-                prefix_path = urlparse(self.url).path.lstrip("/")
-                if rel_path.startswith(prefix_path):
-                    rel_path = rel_path[len(prefix_path):].lstrip("/")
-                local = self.store_dir / rel_path
-                tasks.append(self._dl_one(session, url, local, chunk_size))
+            # 2. 用 semaphore 限制“同时跑多少个任务”
+            sem = asyncio.Semaphore(max_workers)
+
+            async def _bounded_dl(url):
+                async with sem:
+                    # 关键：只取深度之后的相对路径，不再带 /NVIDIA/vGPU/NVIDIA
+                    rel_path = unquote(urlparse(url).path).lstrip("/")
+                    prefix_path = urlparse(self.url).path.lstrip("/")
+                    if rel_path.startswith(prefix_path):
+                        rel_path = rel_path[len(prefix_path):].lstrip("/")
+                    local = self.store_dir / rel_path
+                    await self._dl_one(session, url, local, chunk_size)
+
+            tasks = [_bounded_dl(u) for u in self._file_links]
             await tqdm_asyncio.gather(*tasks, desc="Files")
 
     async def _dl_one(self, session: aiohttp.ClientSession, url: str,

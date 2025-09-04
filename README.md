@@ -1,6 +1,19 @@
-# BatchDownload
+# Batch Download 网页批量文件下载工具
 
 异步批量目录爬虫，支持断点续传、深度限制、扩展名过滤等功能。
+开源地址：https://github.com/PIKACHUIM/BatchDownload
+
+## Install 安装方法
+```shell
+pip install batchdownload aiohttp aiofiles playwright tqdm
+```
+
+首次使用前需安装浏览器依赖：
+```shell
+playwright install chromium
+```
+
+## Usage 使用示例
 
 ```python
 import asyncio
@@ -20,10 +33,5 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-首次使用前需安装浏览器依赖：
-
-```shell
-playwright install chromium
-```
-
-
+## GUI App 图形化客户端下载
+https://github.com/PIKACHUIM/BatchDownload/releases
