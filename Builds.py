@@ -10,7 +10,7 @@ target = Executable(
     base="Win32GUI",
     icon="Clinet.ico",
     # uac_admin=True,
-    target_name="BatchDown.exe"
+    target_name="BatchDownloader.exe"
 )
 
 # SETUP CX FREEZE

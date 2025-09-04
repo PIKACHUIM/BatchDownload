@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import asyncio, threading, tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+import asyncio, threading
+from tkinter import filedialog, messagebox
 import sys, os, datetime
 from pathlib import Path
 from batchdownload import BatchDownload
-
+from ttkbootstrap import *
 
 class AsyncRunner(threading.Thread):
     def __init__(self, coro):
