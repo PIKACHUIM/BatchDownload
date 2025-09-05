@@ -293,6 +293,7 @@ class App(ttk.Frame):
         self.start_btn.config(text="安装中…", state="disabled", bootstyle="secondary")
         def install_then_run():
             try:
+                self._log("开始安装 浏览器组件，请耐心等待...")
                 subprocess.run(["playwright","install","chromium"], check=True,
                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
             except subprocess.CalledProcessError as e:
