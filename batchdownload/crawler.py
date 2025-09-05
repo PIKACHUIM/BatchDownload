@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-异步目录爬虫（最终版）
+异步目录爬虫（可中断最终版）
 存储根目录不再带 /NVIDIA/vGPU/NVIDIA 前缀
 """
 import asyncio, aiohttp, aiofiles, pathlib
@@ -18,28 +18,45 @@ if sys.platform == "win32":
     os.system('')
     ctypes.windll.kernel32.SetConsoleMode(ctypes.windll.kernel32.GetStdHandle(-11), 7)
 
+
 class BatchDownload:
     def __init__(self,
                  url: str,
                  depth: int = 10,
                  store_dir: str = None,
                  ext: Set[str] = None,
-                 download_html: bool = False):
+                 download_html: bool = False,
+                 # ===== 新增两个参数 =====
+                 white: Set[str] = None,
+                 black: Set[str] = None):
+        # ----------- 原来已有的赋值 ----------
         self.url = url.rstrip("/")
         self.depth = depth
-        # 存储目录直接用用户给的短名（默认用域名）
         self.store_dir = pathlib.Path(store_dir or urlparse(url).netloc)
         self.ext = {e.lower() for e in (ext or set())}
         self.download_html = download_html
         self._file_links: List[str] = []
+        self._to_stop = asyncio.Event()
+        self._running_tasks: Set[asyncio.Task] = set()
+        # ----------- 新增两行 ----------
+        self.white = {w.strip().lower() for w in (white or set())}
+        self.black = {b.strip().lower() for b in (black or set())}
+        self.excluded = []          # 给前端打印用
 
     # ------------ 公共 API ------------
-    async def fetch(self) -> List[str]:
-        """遍历并返回文件下载链接（带目录进度条）"""
+    async def fetch(self) -> list[dict]:
+        """
+        1. 爬取所有文件链接
+        2. 黑白名单过滤 -> dict 列表
+        3. 返回格式 [{"url": str, "name": str, "size": int}, ...]
+        4. self.excluded 记录被排除的文件名（供前端打印）
+        """
+        self.excluded = []  # 清空前端打印用
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
             page = await browser.new_page(user_agent="Mozilla/5.0")
-            # 第一层：拿版本号目录
+
+            # 1. 收集原始链接（存 dict，size 先给 0）
             top_links = await self._collect(page, self.url)
             dirs = [h for h in top_links if self._depth(urlparse(h).path) == 0]
             pbar_dir = tqdm(total=len(dirs), desc="ScanDirs", unit="dir")
@@ -48,17 +65,56 @@ class BatchDownload:
                 pbar_dir.update(1)
             pbar_dir.close()
             await browser.close()
-        self._file_links = list(set(self._file_links))
+
+        # 2. 去重
+        raw_links = list({v["url"]: v for v in self._file_links}.values())
+
+        # 3. 黑白名单过滤
+        filtered = []
+        for item in raw_links:
+            name = item["name"].lower()
+            if any(k in name for k in self.black):  # 黑名单优先
+                self.excluded.append(item["name"])
+                continue
+            if self.white and not any(k in name for k in self.white):  # 白名单
+                self.excluded.append(item["name"])
+                continue
+            filtered.append(item)
+
+        # 4. 补全 size（HEAD 拿不到就保持 0）
+        async with aiohttp.ClientSession() as sess:
+            for it in filtered:
+                if it["size"] == 0:
+                    try:
+                        async with sess.head(it["url"]) as resp:
+                            it["size"] = int(resp.headers.get("content-length", 0))
+                    except Exception:
+                        it["size"] = 0
+
+        # 5. 写回实例变量并返回
+        self._file_links = filtered
         return self._file_links
 
     async def download(self, max_workers: int = 3, chunk_size: int = 8192):
         if not self._file_links:
             raise RuntimeError("请先调用 fetch()")
-        await self._download_all(max_workers, chunk_size)
+        self._main_task = asyncio.create_task(
+            self._download_all(max_workers, chunk_size)
+        )
+        try:
+            await self._main_task
+        except asyncio.CancelledError:
+            self._to_stop.set()
+            await self._cancel_all()
+            raise
+
+    async def stop(self):
+        """线程安全，可从 UI 直接调用"""
+        self._to_stop.set()
+        await self._cancel_all()
 
     # ------------ 内部实现 ------------
     def _depth(self, abs_path: str) -> int:
-        """以初始化 url 路径为深度 0"""
         prefix = urlparse(self.url).path
         if abs_path.startswith(prefix):
             abs_path = abs_path[len(prefix):].lstrip("/")
@@ -83,27 +139,25 @@ class BatchDownload:
         links = await self._collect(page, base_url)
         for h in links:
             d = self._depth(urlparse(h).path)
-            # 文件链接（深度 1）
             if d == cur_depth + 1 and self._allowed(h):
                 if not self.download_html and pathlib.Path(h).suffix.lower() in {".html", ".htm"}:
                     continue
-                self._file_links.append(h)
-            # 子目录继续递归
+                self._file_links.append({"url": h, "name": pathlib.Path(h).name, "size": 0})
             elif d == cur_depth + 1 and h.endswith("/"):
                 await self._gather(page, h, cur_depth + 1)
 
     # ---------- 下载相关 ----------
     async def _download_all(self, max_workers: int, chunk_size: int):
-        # 1. 连接池可以稍微大一点，或者干脆用默认 100
         conn = aiohttp.TCPConnector(limit=30)
         timeout = aiohttp.ClientTimeout(total=None, connect=30)
         async with aiohttp.ClientSession(connector=conn, timeout=timeout) as session:
-            # 2. 用 semaphore 限制“同时跑多少个任务”
             sem = asyncio.Semaphore(max_workers)
 
-            async def _bounded_dl(url):
+            async def _bounded_dl(item):
                 async with sem:
-                    # 关键：只取深度之后的相对路径，不再带 /NVIDIA/vGPU/NVIDIA
+                    if self._to_stop.is_set():
+                        return
+                    url = item["url"]
                     rel_path = unquote(urlparse(url).path).lstrip("/")
                     prefix_path = urlparse(self.url).path.lstrip("/")
                     if rel_path.startswith(prefix_path):
@@ -112,25 +166,24 @@ class BatchDownload:
                     await self._dl_one(session, url, local, chunk_size)
 
             tasks = [_bounded_dl(u) for u in self._file_links]
-            await tqdm_asyncio.gather(*tasks, desc="Files")
+            self._running_tasks = {asyncio.create_task(t) for t in tasks}
+            await tqdm_asyncio.gather(*self._running_tasks, desc="Files")
 
     async def _dl_one(self, session: aiohttp.ClientSession, url: str,
                       local: pathlib.Path, chunk: int):
-        """带 10 次重试、大小校验、断点续传"""
         RETRY, BACKOFF = 10, 1
-        # 1. 探测远程大小
         try:
             async with session.head(url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                if self._to_stop.is_set():
+                    return
                 resp.raise_for_status()
                 remote_size = int(resp.headers.get("content-length", 0))
-        except Exception as e:
+        except Exception:
             return
 
-        # 2. 本地大小一致 → 跳过
         if local.exists() and local.stat().st_size == remote_size:
             return
 
-        # 3. 断点续传准备
         headers = {}
         start_byte = 0
         if local.exists():
@@ -140,14 +193,14 @@ class BatchDownload:
         else:
             mode = "wb"
 
-        # 4. 重试循环
         for attempt in range(1, RETRY + 1):
             try:
                 async with session.get(url, headers=headers,
                                        timeout=aiohttp.ClientTimeout(total=None, connect=30)) as resp:
+                    if self._to_stop.is_set():
+                        return
                     resp.raise_for_status()
                     total = int(resp.headers.get("content-length", 0)) + start_byte
-                    # 进度条：文件名即描述
                     pbar = tqdm(total=total, unit='B', unit_scale=True,
                                 desc=local.name, leave=False)
                     pbar.update(start_byte)
@@ -155,16 +208,29 @@ class BatchDownload:
                     safe_make_parent(local)
                     async with aiofiles.open(local, mode) as f:
                         async for data in resp.content.iter_chunked(chunk):
+                            if self._to_stop.is_set():
+                                pbar.close()
+                                return
                             await f.write(data)
                             pbar.update(len(data))
                     pbar.close()
                     return
-            except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
+            except (aiohttp.ClientError, asyncio.TimeoutError, OSError):
                 if attempt < RETRY:
                     await asyncio.sleep(BACKOFF)
                 else:
-                    if local.exists():
-                        local.unlink(missing_ok=True)
+                    local.unlink(missing_ok=True)
+
+    async def _cancel_all(self):
+        """取消所有正在运行的任务"""
+        for t in self._running_tasks:
+            t.cancel()
+        try:
+            await asyncio.wait(self._running_tasks, timeout=0.1)
+        except asyncio.TimeoutError:
+            pass
+        self._running_tasks.clear()
+        self._file_links = []  # 清空文件链接列表
 
 
 # ---------- 工具 ----------
