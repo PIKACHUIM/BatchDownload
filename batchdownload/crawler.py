@@ -139,12 +139,23 @@ class BatchDownload:
         links = await self._collect(page, base_url)
         for h in links:
             d = self._depth(urlparse(h).path)
-            if d == cur_depth + 1 and self._allowed(h):
-                if not self.download_html and pathlib.Path(h).suffix.lower() in {".html", ".htm"}:
-                    continue
-                self._file_links.append({"url": h, "name": pathlib.Path(h).name, "size": 0})
-            elif d == cur_depth + 1 and h.endswith("/"):
-                await self._gather(page, h, cur_depth + 1)
+            if d == cur_depth + 1:
+                # 改进的目录检测逻辑
+                is_dir = False
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        async with session.head(h) as resp:
+                            content_type = resp.headers.get('Content-Type', '')
+                            is_dir = 'text/html' in content_type and not h.endswith(('.html', '.htm'))
+                except:
+                    is_dir = h.endswith('/')
+                
+                if is_dir:  # 是目录则递归
+                    await self._gather(page, h, cur_depth + 1)
+                elif self._allowed(h):  # 是文件且符合扩展名要求
+                    if not self.download_html and pathlib.Path(h).suffix.lower() in {".html", ".htm"}:
+                        continue
+                    self._file_links.append({"url": h, "name": pathlib.Path(h).name, "size": 0})
 
     # ---------- 下载相关 ----------
     async def _download_all(self, max_workers: int, chunk_size: int):
